@@ -450,9 +450,7 @@ def plan(
     """
     clear_command_artifacts("plan")
 
-    context = _resolve_context_with_required_manifest(
-        from_location, identifier, target, validate_owner=True
-    )
+    context = _resolve_context_with_required_manifest(from_location, identifier, target)
     project_id = context.project_identifier
 
     manager = DCMProjectManager()
@@ -556,7 +554,9 @@ def drop(
     """
     Drops a DCM Project. All the objects deployed and managed by this project won't be dropped.
     """
-    context = _resolve_context_with_optional_manifest(from_location, identifier, target)
+    context = _resolve_context_with_optional_manifest(
+        from_location, identifier, target, validate_owner=True
+    )
     project_id = context.project_identifier
 
     result = QueryResult(
@@ -622,7 +622,9 @@ def drop_deployment(
     """
     Drops a deployment from the DCM Project.
     """
-    context = _resolve_context_with_optional_manifest(from_location, identifier, target)
+    context = _resolve_context_with_optional_manifest(
+        from_location, identifier, target, validate_owner=True
+    )
     project_id = context.project_identifier
 
     # Detect potential shell expansion issues
@@ -712,7 +714,9 @@ def refresh(
     """
     clear_command_artifacts("refresh")
 
-    context = _resolve_context_with_optional_manifest(from_location, identifier, target)
+    context = _resolve_context_with_optional_manifest(
+        from_location, identifier, target, validate_owner=True
+    )
     project_id = context.project_identifier
 
     with cli_console.spinner() as spinner:
@@ -737,7 +741,9 @@ def test(
     """
     clear_command_artifacts("test")
 
-    context = _resolve_context_with_optional_manifest(from_location, identifier, target)
+    context = _resolve_context_with_optional_manifest(
+        from_location, identifier, target, validate_owner=True
+    )
     project_id = context.project_identifier
 
     with cli_console.spinner() as spinner:

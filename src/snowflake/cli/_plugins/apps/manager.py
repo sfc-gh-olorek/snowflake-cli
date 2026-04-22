@@ -20,9 +20,12 @@ import re
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Set, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterator, Optional, Set, TypeVar
 
 from snowflake.cli._plugins.apps.generate import IS_PERSONAL_DB_SUPPORTED
+
+DEFAULT_PERSONAL_SCHEMA = "PUBLIC"
+WORKSPACE_LIVE_VERSION_PATH = "versions/live"
 
 if TYPE_CHECKING:
     from snowflake.cli._plugins.apps.snowflake_app_entity_model import (
@@ -180,13 +183,14 @@ def _resolve_deploy_defaults(
         param_vals = dict(raw_params)
 
     # ── 3. Built-in defaults ────────────────────────────────────────────
-    from snowflake.cli.api.project.util import get_env_username
-
     default_vals: Dict[str, Optional[str]] = {
         "artifact_repository": f"{app_name}_REPO",
     }
     if IS_PERSONAL_DB_SUPPORTED:
-        default_vals["database"] = f"USER${get_env_username().upper()}"
+        personal_db = manager.get_personal_database()
+        if personal_db:
+            default_vals["database"] = personal_db
+            default_vals["schema"] = DEFAULT_PERSONAL_SCHEMA
 
     # ── 4. Current session values ─────────────────────────────────────
     ctx = get_cli_context()
@@ -368,6 +372,24 @@ class SnowflakeAppManager(SqlExecutionMixin):
     ``FQN``-based parameters that already use ``.sql_identifier``.
     """
 
+    def get_personal_database(self) -> Optional[str]:
+        """Return the personal database name for the current user.
+
+        Runs ``SELECT 'USER$' || CURRENT_USER() AS personal_database`` and
+        returns the result.  Returns ``None`` when the query fails or the
+        current user is not set (e.g. in unauthenticated contexts).
+        """
+        try:
+            cursor = self.execute_query(
+                "SELECT 'USER$' || CURRENT_USER() AS personal_database"
+            )
+            row = cursor.fetchone()
+            if row and row[0] and not row[0].endswith("$"):
+                return str(row[0]).upper()
+        except Exception:
+            log.warning("Could not resolve personal database.", exc_info=True)
+        return None
+
     def database_exists(self, database: str) -> bool:
         """Return True if *database* exists and is visible to the current role."""
         from snowflake.cli.api.project.util import to_string_literal
@@ -456,6 +478,74 @@ class SnowflakeAppManager(SqlExecutionMixin):
     def drop_stage_if_exists(self, stage_fqn: FQN) -> None:
         """Drop a stage if it exists."""
         self.execute_query(f"DROP STAGE IF EXISTS {stage_fqn.sql_identifier}")
+
+    def create_workspace(self, workspace_fqn: FQN) -> None:
+        """Create a workspace if it doesn't exist."""
+        self.execute_query(
+            f"CREATE WORKSPACE IF NOT EXISTS {workspace_fqn.sql_identifier}"
+        )
+
+    def clear_workspace(self, workspace_fqn: FQN) -> None:
+        """Remove all files from the workspace's live version."""
+        self.execute_query(
+            f"REMOVE snow://workspace/{workspace_fqn.identifier}"
+            f"/{WORKSPACE_LIVE_VERSION_PATH}/"
+        )
+
+    def drop_workspace_if_exists(self, workspace_fqn: FQN) -> None:
+        """Drop a workspace if it exists."""
+        self.execute_query(f"DROP WORKSPACE IF EXISTS {workspace_fqn.sql_identifier}")
+
+    def workspace_uri(self, workspace_fqn: FQN) -> str:
+        """Return the ``snow://workspace/...`` URI pointing at the live version."""
+        return (
+            f"snow://workspace/{workspace_fqn.identifier}"
+            f"/{WORKSPACE_LIVE_VERSION_PATH}"
+        )
+
+    def upload_to_workspace(
+        self,
+        local_root: Path,
+        workspace_fqn: FQN,
+        overwrite: bool = True,
+    ) -> Iterator[Dict[str, str]]:
+        """Recursively upload *local_root*'s contents into the workspace's live version.
+
+        Files are uploaded preserving their relative directory structure
+        under ``snow://workspace/<ws>/versions/live/``.  Each file's final
+        server path is yielded as a dict with ``source`` and ``target`` keys
+        so callers can display progress.
+        """
+        import glob
+        import os
+
+        base_uri = self.workspace_uri(workspace_fqn)
+        local_root = local_root.resolve()
+
+        overwrite_str = str(overwrite).lower()
+        seen_dirs: Set[str] = set()
+        for path in sorted(local_root.rglob("*")):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(local_root)
+            rel_dir = rel.parent
+            dest_dir = (
+                f"{base_uri}/{rel_dir.as_posix()}/"
+                if rel_dir != Path(".")
+                else f"{base_uri}/"
+            )
+            if dest_dir in seen_dirs:
+                continue
+            seen_dirs.add(dest_dir)
+
+            dir_path = path.parent
+            escaped = glob.escape(str(dir_path))
+            local_glob = os.path.join(escaped, "*")
+            self.execute_query(
+                f"PUT file://{local_glob} {dest_dir} "
+                f"auto_compress=false overwrite={overwrite_str}"
+            )
+            yield {"source": str(dir_path), "target": dest_dir}
 
     def get_service_status(self, service_fqn: FQN) -> str:
         """
@@ -587,24 +677,35 @@ class SnowflakeAppManager(SqlExecutionMixin):
 
     def build_app_artifact_repo(
         self,
-        stage_fqn: FQN,
-        artifact_repo_fqn: str,
-        app_id: str,
-        compute_pool: Optional[str],
-        database: str,
-        schema: str,
+        stage_fqn: Optional[FQN] = None,
+        artifact_repo_fqn: str = "",
+        app_id: str = "",
+        compute_pool: Optional[str] = None,
+        database: str = "",
+        schema: str = "",
         runtime_image: str = "",
         build_eai: Optional[str] = None,
         project_type: str = "nodejs",
+        source_uri: Optional[str] = None,
     ) -> str:
-        """Build an app using SYSTEM$SPCS_TEST_BUILD_APP_ARTIFACT_REPO."""
+        """Build an app using SYSTEM$SPCS_TEST_BUILD_APP_ARTIFACT_REPO.
+
+        The build source is specified by either *stage_fqn* (legacy stage
+        flow) or *source_uri* (e.g. a ``snow://workspace/...`` URI for the
+        workspace flow).  Exactly one of the two must be provided.
+        """
         from snowflake.cli.api.project.util import to_string_literal
+
+        if source_uri is None:
+            if stage_fqn is None:
+                raise ValueError("Either stage_fqn or source_uri must be provided")
+            source_uri = f"@{stage_fqn.identifier}"
 
         with self._use_database_and_schema(database, schema):
             config = self._build_artifact_repo_config(build_eai)
             query = (
                 f"SELECT SYSTEM$SPCS_TEST_BUILD_APP_ARTIFACT_REPO("
-                f"'@{stage_fqn.identifier}', "
+                f"{to_string_literal(source_uri)}, "
                 f"{to_string_literal(artifact_repo_fqn)}, "
                 f"{to_string_literal(app_id)}, "
                 f"{to_string_literal(compute_pool or '')}, "

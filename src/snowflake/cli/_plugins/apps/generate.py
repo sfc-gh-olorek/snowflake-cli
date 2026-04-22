@@ -19,7 +19,7 @@ from typing import Dict, Optional
 log = logging.getLogger(__name__)
 
 # Feature flags
-IS_PERSONAL_DB_SUPPORTED = False  # Will be enabled in the future
+IS_PERSONAL_DB_SUPPORTED = True
 
 
 def _generate_snowflake_yml(
@@ -53,11 +53,11 @@ def _generate_snowflake_yml(
     service_compute_pool = resolved["service_compute_pool"]
     build_eai = resolved.get("build_eai")
 
-    # code_stage is emitted as an identifier (``DB.SCHEMA.STAGE``) so it is
-    # self-contained and does not implicitly depend on the app's database
-    # and schema at deploy time.
-    code_stage_name = f"{app_id.upper()}_CODE"
-    code_stage_identifier = f"{database}.{schema}.{code_stage_name}"
+    # code_workspace is emitted as an identifier (``DB.SCHEMA.WORKSPACE``) so
+    # it is self-contained and does not implicitly depend on the app's
+    # database and schema at deploy time.
+    code_workspace_name = f"{app_id.upper()}_CODE"
+    code_workspace_identifier = f"{database}.{schema}.{code_workspace_name}"
 
     build_eai_block = (
         f"\n            build_eai:\n              name: {build_eai}"
@@ -96,6 +96,6 @@ def _generate_snowflake_yml(
             service_compute_pool:
               name: {service_compute_pool}"""
         + build_eai_block
-        + f"\n            code_stage: {code_stage_identifier}\n"
+        + f"\n            code_workspace: {code_workspace_identifier}\n"
     )
     return dedent(raw)

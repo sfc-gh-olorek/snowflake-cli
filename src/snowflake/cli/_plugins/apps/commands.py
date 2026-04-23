@@ -29,10 +29,7 @@ from typing import Optional
 
 import typer
 from click import ClickException
-from snowflake.cli._plugins.apps.generate import (
-    IS_PERSONAL_DB_SUPPORTED,
-    _generate_snowflake_yml,
-)
+from snowflake.cli._plugins.apps.generate import _generate_snowflake_yml
 from snowflake.cli._plugins.apps.manager import (
     DEFAULT_PERSONAL_SCHEMA,
     DEFINITION_FILENAME,
@@ -137,7 +134,7 @@ def snowflake_app_setup(
     session_db = getattr(conn, "database", None) or conn_config.get("database") or None
     session_schema = getattr(conn, "schema", None) or conn_config.get("schema") or None
 
-    personal_db = manager.get_personal_database() if IS_PERSONAL_DB_SUPPORTED else None
+    personal_db = manager.get_personal_database()
     personal_schema = DEFAULT_PERSONAL_SCHEMA if personal_db else None
 
     # ── Resolve each field ────────────────────────────────────────────

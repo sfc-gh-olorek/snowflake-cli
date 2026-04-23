@@ -22,8 +22,6 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, Iterator, Optional, Set, TypeVar
 
-from snowflake.cli._plugins.apps.generate import IS_PERSONAL_DB_SUPPORTED
-
 DEFAULT_PERSONAL_SCHEMA = "PUBLIC"
 WORKSPACE_LIVE_VERSION_PATH = "versions/live"
 
@@ -186,11 +184,10 @@ def _resolve_deploy_defaults(
     default_vals: Dict[str, Optional[str]] = {
         "artifact_repository": f"{app_name}_REPO",
     }
-    if IS_PERSONAL_DB_SUPPORTED:
-        personal_db = manager.get_personal_database()
-        if personal_db:
-            default_vals["database"] = personal_db
-            default_vals["schema"] = DEFAULT_PERSONAL_SCHEMA
+    personal_db = manager.get_personal_database()
+    if personal_db:
+        default_vals["database"] = personal_db
+        default_vals["schema"] = DEFAULT_PERSONAL_SCHEMA
 
     # ── 4. Current session values ─────────────────────────────────────
     ctx = get_cli_context()

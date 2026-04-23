@@ -18,9 +18,6 @@ from typing import Dict, Optional
 
 log = logging.getLogger(__name__)
 
-# Feature flags
-IS_PERSONAL_DB_SUPPORTED = True
-
 
 def _generate_snowflake_yml(
     app_id: str,

@@ -477,9 +477,20 @@ class SnowflakeAppManager(SqlExecutionMixin):
         self.execute_query(f"DROP STAGE IF EXISTS {stage_fqn.sql_identifier}")
 
     def create_workspace(self, workspace_fqn: FQN) -> None:
-        """Create a workspace if it doesn't exist."""
+        """Create a workspace (if missing) and ensure it has a live version.
+
+        A new Snowflake workspace does not have a live version until one is
+        created; the live version is what the ``snow://workspace/.../versions/live/``
+        URI resolves against.  We always follow the create with
+        ``ALTER WORKSPACE ... ADD LIVE VERSION FROM LAST`` so the workspace
+        is immediately writable.
+        """
         self.execute_query(
             f"CREATE WORKSPACE IF NOT EXISTS {workspace_fqn.sql_identifier}"
+        )
+        self.execute_query(
+            f"ALTER WORKSPACE {workspace_fqn.sql_identifier} "
+            f"ADD LIVE VERSION FROM LAST"
         )
 
     def clear_workspace(self, workspace_fqn: FQN) -> None:

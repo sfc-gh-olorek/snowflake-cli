@@ -519,19 +519,19 @@ class SnowflakeAppManager(SqlExecutionMixin):
     ) -> Iterator[Dict[str, str]]:
         """Recursively upload *local_root*'s contents into the workspace's live version.
 
-        Files are uploaded preserving their relative directory structure
-        under ``snow://workspace/<ws>/versions/live/``.  Each file's final
-        server path is yielded as a dict with ``source`` and ``target`` keys
-        so callers can display progress.
+        Each file under *local_root* is uploaded with a single ``PUT``
+        statement, preserving its relative directory structure under
+        ``snow://workspace/<ws>/versions/live/``.  Files are uploaded
+        one-at-a-time (rather than via ``PUT <dir>/*``) because the glob
+        form also matches subdirectories, and the Snowflake PUT endpoint
+        rejects directories with ``253006: Not a file but a directory``.
+        Each uploaded file is yielded as a dict with ``source`` and
+        ``target`` keys so callers can display progress.
         """
-        import glob
-        import os
-
         base_uri = self.workspace_uri(workspace_fqn)
         local_root = local_root.resolve()
-
         overwrite_str = str(overwrite).lower()
-        seen_dirs: Set[str] = set()
+
         for path in sorted(local_root.rglob("*")):
             if not path.is_file():
                 continue
@@ -542,18 +542,11 @@ class SnowflakeAppManager(SqlExecutionMixin):
                 if rel_dir != Path(".")
                 else f"{base_uri}/"
             )
-            if dest_dir in seen_dirs:
-                continue
-            seen_dirs.add(dest_dir)
-
-            dir_path = path.parent
-            escaped = glob.escape(str(dir_path))
-            local_glob = os.path.join(escaped, "*")
             self.execute_query(
-                f"PUT file://{local_glob} {dest_dir} "
+                f"PUT 'file://{path}' '{dest_dir}' "
                 f"auto_compress=false overwrite={overwrite_str}"
             )
-            yield {"source": str(dir_path), "target": dest_dir}
+            yield {"source": str(rel), "target": f"{dest_dir}{path.name}"}
 
     def get_service_status(self, service_fqn: FQN) -> str:
         """

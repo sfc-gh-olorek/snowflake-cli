@@ -721,6 +721,7 @@ class SnowflakeAppManager(SqlExecutionMixin):
                 f"{to_string_literal(config)}"
                 f")"
             )
+            cli_console.step(f"Build query: {query}")
             cursor = self.execute_query(query)
             row = cursor.fetchone()
             return row[0] if row else ""
